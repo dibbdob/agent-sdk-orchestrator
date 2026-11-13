@@ -1,4 +1,6 @@
 import { checkFinding, groupByCause, type CheckedFinding } from './finding.ts';
+import { noCheckpoint, type Checkpoint } from './checkpoint.ts';
+import { escalations, type Escalation } from './escalation.ts';
 import type { AuditSink } from './guardrails.ts';
 import { loadKnowledge, type KnowledgeItem } from './knowledge.ts';
 import { sdkRunner, type AgentOutcome, type AgentRunner } from './runner.ts';
@@ -31,8 +33,13 @@ export type Report = {
   results: TicketResult[];
   findings: CheckedFinding[];
   incidents: { cause_id: string; tickets: string[] }[];
+  /** Every ticket a person must look at, worst first. */
+  escalations: Escalation[];
   summary: string;
+  /** What this run spent, not counting results reused from a checkpoint. */
   costUsd: number;
+  /** How many tickets were taken from the checkpoint instead of investigated again. */
+  resumed: number;
 };
 
 /** One worker's outcome as a ticket result. A failure is a result too, with its reason and its cost. */
@@ -47,26 +54,38 @@ export function toResult(ticket: Ticket, outcome: AgentOutcome, knowledge: Knowl
     : { ticket_id: ticket.id, status: 'failed', reason: 'not_a_finding', detail: 'The reply was not a finding about this ticket.', costUsd: outcome.costUsd };
 }
 
-/**
- * The hub: one worker per ticket, every finding checked, tickets grouped by cause in code, and one
- * synthesis agent that sees findings rather than customers' text. A worker that fails does not stop the
- * others or vanish from the report: the run is partial, the gap is named, and the summary is told.
- */
 export type TriageOptions = {
   runner?: AgentRunner;
   concurrency?: number;
-  /** What the whole run may spend. No worker starts once it is reached; the synthesis gets what is left. */
+  /** What this run may spend. No worker starts once it is reached; the synthesis gets what is left. */
   budgetUsd?: number;
   audit?: AuditSink;
+  /** Where each ticket's result is kept as it finishes. A ticket already investigated there is not redone. */
+  checkpoint?: Checkpoint;
 };
 
+/**
+ * The hub: one worker per ticket, every finding checked, tickets grouped by cause in code, and one
+ * synthesis agent that sees findings rather than customers' text. A worker that fails does not stop the
+ * others or vanish from the report: the run is partial, the gap is named, and the summary is told. With a
+ * checkpoint, a run that was interrupted or partial picks up where it stopped: investigated tickets are
+ * reused, failed ones are tried again.
+ */
 export async function triage(
   tickets: Ticket[] = loadTickets().filter((t) => t.status === 'open'),
-  { runner = sdkRunner, concurrency = 3, budgetUsd = 3, audit = () => {} }: TriageOptions = {},
+  { runner = sdkRunner, concurrency = 3, budgetUsd = 3, audit = () => {}, checkpoint = noCheckpoint }: TriageOptions = {},
 ): Promise<Report> {
   const knowledge = loadKnowledge();
+  const done = checkpoint.load();
   let spent = 0;
+  let resumed = 0;
   const results = await pool(tickets, concurrency, async (ticket): Promise<TicketResult> => {
+    const earlier = done.get(ticket.id);
+    if (earlier?.status === 'investigated') {
+      resumed++;
+      return earlier;
+    }
+
     // Checked before each start, not after each finish: workers already in flight can still take the
     // run over, by at most their own budgets.
     if (spent >= budgetUsd) {
@@ -75,7 +94,9 @@ export async function triage(
 
     const outcome = await runner(workerSpec(ticket, knowledge, audit));
     spent += outcome.costUsd;
-    return toResult(ticket, outcome, knowledge);
+    const result = toResult(ticket, outcome, knowledge);
+    checkpoint.save(result);
+    return result;
   });
 
   const findings = results.flatMap((r) => (r.status === 'investigated' ? [r.finding] : []));
@@ -95,7 +116,10 @@ export async function triage(
     results,
     findings,
     incidents: [...shared].map(([cause_id, fs]) => ({ cause_id, tickets: fs.map((f) => f.ticket_id) })),
+    escalations: escalations(results, tickets),
     summary: synthesis.ok ? synthesis.text : `(no summary: the synthesis run failed with ${synthesis.reason}; the findings above stand)`,
-    costUsd: results.reduce((sum, r) => sum + r.costUsd, 0) + synthesis.costUsd,
+    // What this run spent. A reused result was paid for by the run that produced it.
+    costUsd: spent + synthesis.costUsd,
+    resumed,
   };
 }
