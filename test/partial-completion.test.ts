@@ -53,6 +53,16 @@ test('the synthesiser is told which tickets were not investigated', async () => 
   assert.match(prompt, /do not describe the investigation as complete/);
 });
 
+test('the synthesiser is told how many tickets there were, rather than counting them', async () => {
+  // The first real run's summary said "all 11 tickets were investigated" of ten.
+  const fake = runWith({ 'T-1006': failure('error_max_budget_usd') });
+
+  await triage(open, { runner: fake.run });
+
+  const prompt = fake.specs.find((s) => s.label === 'synthesis')!.prompt;
+  assert.match(prompt, new RegExp(`^${open.length} open tickets: ${open.length - 1} investigated, 1 not\\.$`, 'm'));
+});
+
 test('a failed synthesis keeps the findings and says why there is no summary', async () => {
   const fake = runWith({}, failure('exception', 0));
 

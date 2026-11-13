@@ -1,0 +1,23 @@
+# The whole gate, ./build.sh, run on GitHub's machines on every push to main and every pull request, as it
+# runs locally: no model is called and nothing is spent.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # It runs the TypeScript directly, which needs Node 26.
+          node-version: 26
+      - run: npm ci
+      - run: ./build.sh
