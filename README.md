@@ -28,6 +28,7 @@ git log --graph --format='%h %s%n%b' main
 | 5 | `guardrails` | A worker's tools were limited only by configuration, nothing was recorded, and nothing limited the run's spend |
 | 6 | `resume-and-escalation` | A second run paid again for everything, and nobody had one list of what needed a person |
 | 7 | `command-line` | It could not be run without writing code |
+| 8 | `first-triage` | No model had yet run it: whether the workers find the causes, and what it costs, were still claims |
 
 Some findings came from checking the checks: the build passed with zero tests after a test file was
 removed; the first draft of the incident test patched its own fixtures to manufacture a shared cause
