@@ -1,5 +1,7 @@
+import { checkFinding, groupByCause, type CheckedFinding } from './finding.ts';
 import { loadKnowledge } from './knowledge.ts';
-import { sdkRunner, type AgentOutcome, type AgentRunner } from './runner.ts';
+import { sdkRunner, type AgentRunner } from './runner.ts';
+import { synthesisSpec } from './synthesis.ts';
 import { loadTickets, type Ticket } from './tickets.ts';
 import { workerSpec } from './worker.ts';
 
@@ -17,16 +19,36 @@ export async function pool<T, R>(items: T[], limit: number, work: (item: T) => P
   return results;
 }
 
+export type Report = {
+  findings: CheckedFinding[];
+  incidents: { cause_id: string; tickets: string[] }[];
+  summary: string;
+};
+
 /**
- * The hub. It decides which tickets get a worker, starts each in its own context, and collects what
- * comes back. Orchestration is code, not a model: fan-out is a loop, so it is predictable, testable and
- * free.
+ * The hub: one worker per ticket, every finding checked, tickets grouped by cause in code, and one
+ * synthesis agent that sees findings rather than customers' text.
  */
-export async function investigateAll(
+export async function triage(
   tickets: Ticket[] = loadTickets().filter((t) => t.status === 'open'),
   runner: AgentRunner = sdkRunner,
   concurrency = 3,
-): Promise<{ ticket: Ticket; outcome: AgentOutcome }[]> {
+): Promise<Report> {
   const knowledge = loadKnowledge();
-  return pool(tickets, concurrency, async (ticket) => ({ ticket, outcome: await runner(workerSpec(ticket, knowledge)) }));
+  const outcomes = await pool(tickets, concurrency, async (ticket) => ({ ticket, outcome: await runner(workerSpec(ticket, knowledge)) }));
+
+  const findings = outcomes
+    .map(({ ticket, outcome }) => (outcome.ok ? checkFinding(outcome.structured, ticket, knowledge) : null))
+    .filter((f): f is CheckedFinding => f !== null);
+  // An incident is a cause with more than one customer. Everything else is reported ticket by ticket.
+  const shared = new Map([...groupByCause(findings)].filter(([, fs]) => fs.length > 1));
+  const inIncident = new Set([...shared.values()].flat().map((f) => f.ticket_id));
+  const alone = findings.filter((f) => !inIncident.has(f.ticket_id));
+
+  const synthesis = await runner(synthesisSpec(shared, alone, knowledge));
+  return {
+    findings,
+    incidents: [...shared].map(([cause_id, fs]) => ({ cause_id, tickets: fs.map((f) => f.ticket_id) })),
+    summary: synthesis.ok ? synthesis.text : `(no summary: ${synthesis.reason})`,
+  };
 }

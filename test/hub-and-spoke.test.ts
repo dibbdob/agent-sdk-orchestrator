@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { investigateAll } from '../src/coordinator.ts';
+import { triage } from '../src/coordinator.ts';
 import { deskHandlers, DESK_TOOLS } from '../src/desk-tools.ts';
 import { loadKnowledge, searchKnowledge } from '../src/knowledge.ts';
 import { loadTickets } from '../src/tickets.ts';
@@ -47,12 +47,13 @@ test('a worker starts with nothing but its ticket id, two read-only tools, and n
 });
 
 test('every open ticket gets its own worker, never more than three at once', async () => {
-  const fake = fakeRunner((spec) => ok(`looked at ${spec.prompt}`));
+  const fake = fakeRunner((spec) => ok('', spec.label === 'synthesis' ? undefined
+    : { ticket_id: /T-\d{4}/.exec(spec.prompt)![0], cause_id: 'unknown', summary: 's', confidence: 'low', evidence: [], needs_human: false }));
 
-  const results = await investigateAll(open, fake.run, 3);
+  await triage(open, fake.run, 3);
 
-  assert.deepEqual(results.map((r) => r.ticket.id), open.map((t) => t.id));
-  assert.equal(fake.specs.length, open.length);
+  const workers = fake.specs.filter((s) => s.label.startsWith('worker'));
+  assert.deepEqual(workers.map((s) => s.label), open.map((t) => `worker ${t.id}`));
   assert.ok(fake.maxInFlight() <= 3, `max in flight was ${fake.maxInFlight()}`);
   assert.ok(fake.maxInFlight() > 1, 'workers should run in parallel');
 });
