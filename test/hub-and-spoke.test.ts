@@ -50,7 +50,7 @@ test('every open ticket gets its own worker, never more than three at once', asy
   const fake = fakeRunner((spec) => ok('', spec.label === 'synthesis' ? undefined
     : { ticket_id: /T-\d{4}/.exec(spec.prompt)![0], cause_id: 'unknown', summary: 's', confidence: 'low', evidence: [], needs_human: false }));
 
-  await triage(open, fake.run, 3);
+  await triage(open, { runner: fake.run, concurrency: 3 });
 
   const workers = fake.specs.filter((s) => s.label.startsWith('worker'));
   assert.deepEqual(workers.map((s) => s.label), open.map((t) => `worker ${t.id}`));

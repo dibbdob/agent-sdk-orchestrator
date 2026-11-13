@@ -69,7 +69,7 @@ test('tickets that share a cause become one incident, and the synthesiser never 
 
   // T-1008 and T-1013 cite the same change; T-1011 is the same release but a different change, and
   // T-1001 is the only customer of its cause, so neither is an incident.
-  const report = await triage(open, fake.run, 3);
+  const report = await triage(open, { runner: fake.run, concurrency: 3 });
 
   assert.deepEqual(report.incidents, [{ cause_id: 'REL-2611-1', tickets: ['T-1008', 'T-1013'] }]);
   const synthesis = fake.specs.find((s) => s.label === 'synthesis')!;

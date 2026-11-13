@@ -23,7 +23,7 @@ function runWith(special: Record<string, AgentOutcome>, synthesis: AgentOutcome 
 
 test('a run where every worker succeeds is complete', async () => {
   const fake = runWith({});
-  const report = await triage(open, fake.run);
+  const report = await triage(open, { runner: fake.run });
 
   assert.equal(report.status, 'complete');
   assert.equal(report.results.length, open.length);
@@ -32,7 +32,7 @@ test('a run where every worker succeeds is complete', async () => {
 test('a failed worker and a worker that replied with something else are both reported, and the run is partial', async () => {
   const fake = runWith({ 'T-1006': failure('error_max_turns'), 'T-1009': ok('', { not: 'a finding' }) });
 
-  const report = await triage(open, fake.run);
+  const report = await triage(open, { runner: fake.run });
 
   assert.equal(report.status, 'partial');
   assert.equal(report.results.length, open.length, 'every ticket has a result');
@@ -46,7 +46,7 @@ test('a failed worker and a worker that replied with something else are both rep
 test('the synthesiser is told which tickets were not investigated', async () => {
   const fake = runWith({ 'T-1006': failure('error_max_budget_usd') });
 
-  await triage(open, fake.run);
+  await triage(open, { runner: fake.run });
 
   const prompt = fake.specs.find((s) => s.label === 'synthesis')!.prompt;
   assert.match(prompt, /Not investigated[^\n]*\n\s*T-1006/);
@@ -56,7 +56,7 @@ test('the synthesiser is told which tickets were not investigated', async () => 
 test('a failed synthesis keeps the findings and says why there is no summary', async () => {
   const fake = runWith({}, failure('exception', 0));
 
-  const report = await triage(open, fake.run);
+  const report = await triage(open, { runner: fake.run });
 
   assert.equal(report.findings.length, open.length);
   assert.match(report.summary, /synthesis run failed with exception; the findings above stand/);
@@ -65,7 +65,7 @@ test('a failed synthesis keeps the findings and says why there is no summary', a
 test('the cost includes every worker, failed or not, and the synthesis', async () => {
   const fake = runWith({ 'T-1006': failure('error_max_turns', 0.05) });
 
-  const report = await triage(open, fake.run);
+  const report = await triage(open, { runner: fake.run });
 
   const expected = 0.01 * (open.length - 1) + 0.05 + 0.2;
   assert.ok(Math.abs(report.costUsd - expected) < 1e-9, `${report.costUsd} vs ${expected}`);
