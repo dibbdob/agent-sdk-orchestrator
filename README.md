@@ -84,6 +84,7 @@ first real run's `report.md` will say what it actually spent.
   run budgets; resume from a checkpoint; the escalation queue; the report; that the CLI spends
   nothing without `--yes`; and that it refuses a budget or concurrency that is not a positive number.
 - **Verified against the SDK's types** (version 0.3.323): every option, hook and message shape used.
+- **Run on GitHub:** `./build.sh`, by the `build` workflow on every push to `main` and every pull request.
 - **Not yet verified by a real run:** anything a model does. Whether the workers find the causes the data
   was written to contain (REL-2611-1 for T-1008 and T-1013, INC-1110 for T-1001) is what the first run
   will show.
