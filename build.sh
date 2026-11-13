@@ -7,6 +7,9 @@ echo "== types"
 node_modules/.bin/tsc
 
 echo "== tests"
-node --test 'test/**/*.test.ts' 2>&1 | grep -E '^ℹ (tests|pass|fail) '
+out="$(node --test 'test/**/*.test.ts' 2>&1)" || { echo "$out"; exit 1; }
+echo "$out" | grep -E '^ℹ (tests|pass|fail) '
+# A run that finds no tests is not a pass.
+echo "$out" | grep -qE '^ℹ tests [1-9]' || { echo "No tests ran." >&2; exit 1; }
 
 echo "== build passed"
