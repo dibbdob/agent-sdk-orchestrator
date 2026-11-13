@@ -10,7 +10,7 @@ export const SYNTHESIS_MODEL = 'claude-opus-5-5';
  * those, and passing them on would hand the synthesiser nine customers' text, and T-1010's instruction,
  * for no gain.
  */
-export function synthesisSpec(groups: Map<string, CheckedFinding[]>, alone: CheckedFinding[], knowledge: KnowledgeItem[], notInvestigated: string[] = []): AgentSpec {
+export function synthesisSpec(groups: Map<string, CheckedFinding[]>, alone: CheckedFinding[], knowledge: KnowledgeItem[], notInvestigated: string[] = [], budgetUsd = 1): AgentSpec {
   const cite = (id: string) => knowledge.find((k) => k.id === id)?.text ?? '(not in the knowledge base)';
   const incidents = [...groups].map(([cause, fs]) =>
     `- ${cause}: ${cite(cause)}\n  tickets: ${fs.map((f) => `${f.ticket_id} (${f.confidence}) ${f.summary}`).join(' | ')}`);
@@ -32,6 +32,6 @@ ${notInvestigated.join(', ') || '(none)'}
 Write the summary for the desk's lead: each shared cause as an incident, in order of how many customers
 it affects, with what to do next; then the rest briefly; then say plainly which tickets were not
 investigated. Use only what is above, and do not describe the investigation as complete if any were not.`,
-    options: { model: SYNTHESIS_MODEL, tools: [], settingSources: [], permissionMode: 'dontAsk', maxTurns: 1, env: { ...process.env } },
+    options: { model: SYNTHESIS_MODEL, tools: [], settingSources: [], permissionMode: 'dontAsk', maxTurns: 1, maxBudgetUsd: budgetUsd, env: { ...process.env } },
   };
 }

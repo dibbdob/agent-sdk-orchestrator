@@ -1,4 +1,5 @@
 import { checkFinding, groupByCause, type CheckedFinding } from './finding.ts';
+import type { AuditSink } from './guardrails.ts';
 import { loadKnowledge, type KnowledgeItem } from './knowledge.ts';
 import { sdkRunner, type AgentOutcome, type AgentRunner } from './runner.ts';
 import { synthesisSpec } from './synthesis.ts';
@@ -51,13 +52,31 @@ export function toResult(ticket: Ticket, outcome: AgentOutcome, knowledge: Knowl
  * synthesis agent that sees findings rather than customers' text. A worker that fails does not stop the
  * others or vanish from the report: the run is partial, the gap is named, and the summary is told.
  */
+export type TriageOptions = {
+  runner?: AgentRunner;
+  concurrency?: number;
+  /** What the whole run may spend. No worker starts once it is reached; the synthesis gets what is left. */
+  budgetUsd?: number;
+  audit?: AuditSink;
+};
+
 export async function triage(
   tickets: Ticket[] = loadTickets().filter((t) => t.status === 'open'),
-  runner: AgentRunner = sdkRunner,
-  concurrency = 3,
+  { runner = sdkRunner, concurrency = 3, budgetUsd = 3, audit = () => {} }: TriageOptions = {},
 ): Promise<Report> {
   const knowledge = loadKnowledge();
-  const results = await pool(tickets, concurrency, async (ticket) => toResult(ticket, await runner(workerSpec(ticket, knowledge)), knowledge));
+  let spent = 0;
+  const results = await pool(tickets, concurrency, async (ticket): Promise<TicketResult> => {
+    // Checked before each start, not after each finish: workers already in flight can still take the
+    // run over, by at most their own budgets.
+    if (spent >= budgetUsd) {
+      return { ticket_id: ticket.id, status: 'failed', reason: 'run_budget_spent', detail: `The run had spent $${spent.toFixed(2)} of $${budgetUsd.toFixed(2)}.`, costUsd: 0 };
+    }
+
+    const outcome = await runner(workerSpec(ticket, knowledge, audit));
+    spent += outcome.costUsd;
+    return toResult(ticket, outcome, knowledge);
+  });
 
   const findings = results.flatMap((r) => (r.status === 'investigated' ? [r.finding] : []));
   const failed = results.filter((r) => r.status === 'failed');
@@ -67,7 +86,10 @@ export async function triage(
   const inIncident = new Set([...shared.values()].flat().map((f) => f.ticket_id));
   const alone = findings.filter((f) => !inIncident.has(f.ticket_id));
 
-  const synthesis = await runner(synthesisSpec(shared, alone, knowledge, failed.map((f) => f.ticket_id)));
+  const remaining = budgetUsd - spent;
+  const synthesis: AgentOutcome = remaining > 0
+    ? await runner(synthesisSpec(shared, alone, knowledge, failed.map((f) => f.ticket_id), remaining))
+    : { ok: false, reason: 'run_budget_spent', detail: 'Nothing was left for the synthesis.', costUsd: 0, turns: 0 };
   return {
     status: failed.length === 0 ? 'complete' : 'partial',
     results,
