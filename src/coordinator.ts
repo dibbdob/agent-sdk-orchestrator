@@ -1,6 +1,6 @@
 import { checkFinding, groupByCause, type CheckedFinding } from './finding.ts';
-import { loadKnowledge } from './knowledge.ts';
-import { sdkRunner, type AgentRunner } from './runner.ts';
+import { loadKnowledge, type KnowledgeItem } from './knowledge.ts';
+import { sdkRunner, type AgentOutcome, type AgentRunner } from './runner.ts';
 import { synthesisSpec } from './synthesis.ts';
 import { loadTickets, type Ticket } from './tickets.ts';
 import { workerSpec } from './worker.ts';
@@ -19,15 +19,37 @@ export async function pool<T, R>(items: T[], limit: number, work: (item: T) => P
   return results;
 }
 
+/** How one ticket's investigation ended. Every ticket has exactly one. */
+export type TicketResult =
+  | { ticket_id: string; status: 'investigated'; finding: CheckedFinding; costUsd: number }
+  | { ticket_id: string; status: 'failed'; reason: string; detail: string; costUsd: number };
+
 export type Report = {
+  /** complete when every ticket was investigated; partial when any was not. */
+  status: 'complete' | 'partial';
+  results: TicketResult[];
   findings: CheckedFinding[];
   incidents: { cause_id: string; tickets: string[] }[];
   summary: string;
+  costUsd: number;
 };
+
+/** One worker's outcome as a ticket result. A failure is a result too, with its reason and its cost. */
+export function toResult(ticket: Ticket, outcome: AgentOutcome, knowledge: KnowledgeItem[]): TicketResult {
+  if (!outcome.ok) {
+    return { ticket_id: ticket.id, status: 'failed', reason: outcome.reason, detail: outcome.detail, costUsd: outcome.costUsd };
+  }
+
+  const finding = checkFinding(outcome.structured, ticket, knowledge);
+  return finding
+    ? { ticket_id: ticket.id, status: 'investigated', finding, costUsd: outcome.costUsd }
+    : { ticket_id: ticket.id, status: 'failed', reason: 'not_a_finding', detail: 'The reply was not a finding about this ticket.', costUsd: outcome.costUsd };
+}
 
 /**
  * The hub: one worker per ticket, every finding checked, tickets grouped by cause in code, and one
- * synthesis agent that sees findings rather than customers' text.
+ * synthesis agent that sees findings rather than customers' text. A worker that fails does not stop the
+ * others or vanish from the report: the run is partial, the gap is named, and the summary is told.
  */
 export async function triage(
   tickets: Ticket[] = loadTickets().filter((t) => t.status === 'open'),
@@ -35,20 +57,23 @@ export async function triage(
   concurrency = 3,
 ): Promise<Report> {
   const knowledge = loadKnowledge();
-  const outcomes = await pool(tickets, concurrency, async (ticket) => ({ ticket, outcome: await runner(workerSpec(ticket, knowledge)) }));
+  const results = await pool(tickets, concurrency, async (ticket) => toResult(ticket, await runner(workerSpec(ticket, knowledge)), knowledge));
 
-  const findings = outcomes
-    .map(({ ticket, outcome }) => (outcome.ok ? checkFinding(outcome.structured, ticket, knowledge) : null))
-    .filter((f): f is CheckedFinding => f !== null);
+  const findings = results.flatMap((r) => (r.status === 'investigated' ? [r.finding] : []));
+  const failed = results.filter((r) => r.status === 'failed');
+
   // An incident is a cause with more than one customer. Everything else is reported ticket by ticket.
   const shared = new Map([...groupByCause(findings)].filter(([, fs]) => fs.length > 1));
   const inIncident = new Set([...shared.values()].flat().map((f) => f.ticket_id));
   const alone = findings.filter((f) => !inIncident.has(f.ticket_id));
 
-  const synthesis = await runner(synthesisSpec(shared, alone, knowledge));
+  const synthesis = await runner(synthesisSpec(shared, alone, knowledge, failed.map((f) => f.ticket_id)));
   return {
+    status: failed.length === 0 ? 'complete' : 'partial',
+    results,
     findings,
     incidents: [...shared].map(([cause_id, fs]) => ({ cause_id, tickets: fs.map((f) => f.ticket_id) })),
-    summary: synthesis.ok ? synthesis.text : `(no summary: ${synthesis.reason})`,
+    summary: synthesis.ok ? synthesis.text : `(no summary: the synthesis run failed with ${synthesis.reason}; the findings above stand)`,
+    costUsd: results.reduce((sum, r) => sum + r.costUsd, 0) + synthesis.costUsd,
   };
 }
