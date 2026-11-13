@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import type { Report } from '../src/coordinator.ts';
 import { renderMarkdown } from '../src/report.ts';
 
@@ -43,4 +43,13 @@ test('the command line spends nothing without --yes', () => {
   assert.equal(code, 3);
   assert.match(stderr, /Nothing was run/);
   assert.match(stderr, /can reach \$3\.50/);
+});
+
+test('the command line refuses a budget or concurrency that is not a positive number', () => {
+  // Number('abc') is NaN, and `spent >= NaN` is never true: an unreadable budget would have removed the cap.
+  for (const args of [['--budget', 'abc'], ['--budget', '0'], ['--budget=-1'], ['--concurrency', '0'], ['--concurrency', '1.5'], ['--concurrency', 'x']]) {
+    const run = spawnSync(process.execPath, ['src/cli.ts', ...args], { encoding: 'utf8', env: { ...process.env, ANTHROPIC_API_KEY: '' } });
+    assert.equal(run.status, 2, `${args.join(' ')}: ${run.stderr}`);
+    assert.match(run.stderr, /must be a positive/);
+  }
 });

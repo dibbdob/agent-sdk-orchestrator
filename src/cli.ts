@@ -26,6 +26,16 @@ const { values } = parseArgs({
 
 const budgetUsd = Number(values.budget);
 const concurrency = Number(values.concurrency);
+// Checked before anything is printed or run. Number('abc') is NaN, and no amount spent is ever >= NaN, so
+// an unreadable budget would quietly remove the cap; a concurrency of 0 or NaN would start no workers.
+if (!(Number.isFinite(budgetUsd) && budgetUsd > 0)) {
+  console.error(`--budget must be a positive number of dollars, not '${values.budget}'.`);
+  process.exit(2);
+}
+if (!(Number.isInteger(concurrency) && concurrency > 0)) {
+  console.error(`--concurrency must be a positive whole number, not '${values.concurrency}'.`);
+  process.exit(2);
+}
 const open = loadTickets().filter((t) => t.status === 'open');
 const runId = values.run ?? new Date().toISOString().replaceAll(/[:.]/g, '-');
 const dir = join('runs', runId);
