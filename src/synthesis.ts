@@ -16,9 +16,16 @@ export function synthesisSpec(groups: Map<string, CheckedFinding[]>, alone: Chec
     `- ${cause}: ${cite(cause)}\n  tickets: ${fs.map((f) => `${f.ticket_id} (${f.confidence}) ${f.summary}`).join(' | ')}`);
   const singles = alone.map((f) => `- ${f.ticket_id} (${f.confidence}, cause ${f.cause_id}): ${f.summary}`);
 
+  // The counts are given, not left to the model: the first real run's summary miscounted ten tickets as
+  // eleven.
+  const investigated = [...groups.values()].reduce((n, fs) => n + fs.length, alone.length);
+  const counts = `${investigated + notInvestigated.length} open tickets: ${investigated} investigated, ${notInvestigated.length} not.`;
+
   return {
     label: 'synthesis',
     prompt: `Checked findings from the investigation of the desk's open tickets.
+
+${counts}
 
 Shared causes:
 ${incidents.join('\n') || '(none)'}
@@ -31,7 +38,7 @@ ${notInvestigated.join(', ') || '(none)'}
 
 Write the summary for the desk's lead: each shared cause as an incident, in order of how many customers
 it affects, with what to do next; then the rest briefly; then say plainly which tickets were not
-investigated. Use only what is above, and do not describe the investigation as complete if any were not.`,
+investigated. Use only what is above, take the counts from it, and do not describe the investigation as complete if any were not.`,
     options: { model: SYNTHESIS_MODEL, tools: [], settingSources: [], permissionMode: 'dontAsk', maxTurns: 1, maxBudgetUsd: budgetUsd, env: { ...process.env } },
   };
 }
